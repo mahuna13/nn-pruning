@@ -37,8 +37,11 @@ class Network(object):
         if weights_filename:
             self.load_weights(weights_filename)
         else:
-            self.weights = [np.random.randn(y, x)
-                        for x, y in zip(sizes[:-1], sizes[1:])]
+#            self.weights = [np.random.randn(y, x)
+ #                       for x, y in zip(sizes[:-1], sizes[1:])]
+
+            self.weights = [np.random.randn(y, x)/np.sqrt(x)
+                       for x, y in zip(sizes[:-1], sizes[1:])]
 
         self.mask = [np.ones((y, x)) for x, y in zip(sizes[:-1], sizes[1:])]
         self.mask_threshold = mask_threshold
@@ -49,7 +52,7 @@ class Network(object):
     def feedforward(self, a):
         """Return the output of the network if ``a`` is input."""
         for b, w in zip(self.biases, self.weights):
-            a = sigmoid(np.dot(w, a)+b)
+            a = relu(np.dot(w, a)+b)
         return a
 
     def update_mask(self):
@@ -133,11 +136,11 @@ class Network(object):
         for b, w in zip(self.biases, self.weights):
             z = np.dot(w, activation)+b
             zs.append(z)
-            activation = sigmoid(z)
+            activation = relu(z)
             activations.append(activation)
         # backward pass
         delta = self.cost_derivative(activations[-1], y) * \
-            sigmoid_prime(zs[-1])
+            relu_prime(zs[-1])
         nabla_b[-1] = delta
         nabla_w[-1] = np.dot(delta, activations[-2].transpose())
         # Note that the variable l in the loop below is used a little
@@ -148,7 +151,7 @@ class Network(object):
         # that Python can use negative indices in lists.
         for l in xrange(2, self.num_layers):
             z = zs[-l]
-            sp = sigmoid_prime(z)
+            sp = relu_prime(z)
             delta = np.dot(self.weights[-l+1].transpose(), delta) * sp
             nabla_b[-l] = delta
             nabla_w[-l] = np.dot(delta, activations[-l-1].transpose())
@@ -204,6 +207,13 @@ class Network(object):
 def sigmoid(z):
     """The sigmoid function."""
     return 1.0/(1.0+np.exp(-z))
+
+def relu(z):
+    """The relu function."""
+    return np.maximum(z, 0, z)
+
+def relu_prime(z):
+    return 1. * (z > 0)
 
 def sigmoid_prime(z):
     """Derivative of the sigmoid function."""

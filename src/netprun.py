@@ -104,7 +104,7 @@ class Network(object):
         self.output_dropout = self.layers[-1].output_dropout
 
     def SGD(self, training_data, epochs, mini_batch_size, eta,
-            validation_data, test_data, lmbda=0.0, pruning = False):
+            validation_data, test_data, lmbda=0.0, prate=0.0, pruning = False):
         """Train the network using mini-batch stochastic gradient descent."""
         training_x, training_y = training_data
         validation_x, validation_y = validation_data
@@ -120,12 +120,7 @@ class Network(object):
         cost = self.layers[-1].cost(self)+\
                0.5*lmbda*l2_norm_squared/num_training_batches
         grads = T.grad(cost, self.params)
-        if (pruning):
-            updates = [(param, param-eta*(grad * mask))
-                       for param, grad, mask in zip(self.params, grads, self.masks)]
-        else:
-            updates = [(param, param-eta*grad)
-                       for param, grad in zip(self.params, grads)]
+        updates = [(param, param-eta*grad) for param, grad in zip(self.params, grads)]
 
         # define functions to train a mini-batch, and to compute the
         # accuracy in validation and test mini-batches.
@@ -168,6 +163,8 @@ class Network(object):
                 if iteration % 1000 == 0:
                     print("Training mini-batch number {0}".format(iteration))
                 cost_ij = train_mb(minibatch_index)
+                if pruning:
+                    self.update_masks(prate)
                 if (iteration+1) % num_training_batches == 0:
                     validation_accuracy = np.mean(
                         [validate_mb_accuracy(j) for j in xrange(num_validation_batches)])
@@ -188,9 +185,9 @@ class Network(object):
         print("Corresponding test accuracy of {0:.2%}".format(test_accuracy))
         return test_accuracy
 
-    def update_masks(self, threshold):
+    def update_masks(self, prate):
         for layer in self.layers:
-            layer.update_masks()(threshold)
+            layer.update_masks()(prate)
 
     def apply_masks(self):
         apply = theano.function(
@@ -287,22 +284,27 @@ class FullyConnectedLayer(object):
     def set_inpt(self, inpt, inpt_dropout, mini_batch_size):
         self.inpt = inpt.reshape((mini_batch_size, self.n_in))
         self.output = self.activation_fn(
-            (1-self.p_dropout)*T.dot(self.inpt, self.w) + self.b)
+            (1-self.p_dropout)*T.dot(self.inpt, (self.w * self.w_mask)) + self.b)
         self.y_out = T.argmax(self.output, axis=1)
         self.inpt_dropout = dropout_layer(
             inpt_dropout.reshape((mini_batch_size, self.n_in)), self.p_dropout)
         self.output_dropout = self.activation_fn(
-            T.dot(self.inpt_dropout, self.w) + self.b)
+            T.dot(self.inpt_dropout, (self.w * self.w_mask)) + self.b)
 
     def accuracy(self, y):
         "Return the accuracy for the mini-batch."
         return T.mean(T.eq(y, self.y_out)) 
     
+    def prune(self, prate):
+        abs_w = T.abs_(self.w)
+        threshold = T.mean(abs_w) + prate * T.std(abs_w);
+        return (abs_w > threshold)
+        
     def update_masks(self):
-        threshold = T.fscalar();
+        prate = T.fscalar();
         return theano.function(
-            [threshold], [], 
-            updates=[(self.w_mask, self.w_mask *  (T.abs_(self.w) > threshold))],
+            [prate], [], 
+            updates=[(self.w_mask, np.ones((self.n_in, self.n_out)) * self.prune(prate))],
             on_unused_input='ignore')
 
 class SoftmaxLayer(object):
@@ -345,8 +347,8 @@ class SoftmaxLayer(object):
         return T.mean(T.eq(y, self.y_out))
 
     def update_masks(self):
-        threshold = T.fscalar();        
-        return theano.function([threshold], [], on_unused_input='ignore')
+        prate = T.fscalar();        
+        return theano.function([prate], [], on_unused_input='ignore')
 
 #### Miscellanea
 def size(data):
@@ -358,3 +360,6 @@ def dropout_layer(layer, p_dropout):
         np.random.RandomState(0).randint(999999))
     mask = srng.binomial(n=1, p=1-p_dropout, size=layer.shape)
     return layer*T.cast(mask, theano.config.floatX)
+
+def under(arr, threshold):
+    return ((np.absolute(arr) < threshold).sum())/float(arr.size)
